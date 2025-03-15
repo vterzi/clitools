@@ -95,17 +95,24 @@ class ScreenBuffer:
         """Number of rows."""
         return self._rows
 
-    def idx(self, pos: "tuple[int, int]") -> int:
+    def idx(self, row: int, col: int) -> int:
         """Get the buffer index for a one-based position (row, column)."""
-        i = pos[0] - 1 + (pos[1] - 1) * self._cols
-        i = max(0, min(i, len(self._buffer) - 1))
-        return i
+        cols = self._cols
+        rows = self._rows
+        return (
+            col - 1 + (row - 1) * cols
+            if 1 <= col <= cols and 1 <= row <= rows
+            else -1
+        )
 
     def __getitem__(self, key: "tuple[int, int]") -> str:
-        return self._buffer[self.idx(key)]
+        idx = self.idx(key[0], key[1])
+        return self._buffer[idx] if idx >= 0 else ""
 
     def __setitem__(self, key: "tuple[int, int]", value: str) -> None:
-        self._buffer[self.idx(key)] = value[0]
+        idx = self.idx(key[0], key[1])
+        if idx >= 0:
+            self._buffer[idx] = value[0]
 
     def show_cursor(self) -> None:
         """Show the cursor's current position."""
@@ -167,7 +174,7 @@ class ScreenBuffer:
 class Anchor:
     """Anchor."""
 
-    def __init__(self, x: float, y: float) -> None:
+    def __init__(self, y: float, x: float) -> None:
         self.x = x
         self.y = y
 
@@ -202,14 +209,14 @@ class Rectangle(Drawable):
         y = self.top_left.row(rows)
         w = self.bottom_right.col(cols) - x + 1
         h = self.bottom_right.row(rows) - y + 1
-        frame[x, y] = "╔"
+        frame[y, x] = "╔"
         for i in range(1, w - 1):
-            frame[x + i, y] = "═"
-        frame[x + w - 1, y] = "╗"
+            frame[y, x + i] = "═"
+        frame[y, x + w - 1] = "╗"
         for j in range(1, h - 1):
-            frame[x, y + j] = "║"
-            frame[x + w - 1, y + j] = "║"
-        frame[x, y + h - 1] = "╚"
+            frame[y + j, x] = "║"
+            frame[y + j, x + w - 1] = "║"
+        frame[y + h - 1, x] = "╚"
         for i in range(1, w - 1):
-            frame[x + i, y + h - 1] = "═"
-        frame[x + w - 1, y + h - 1] = "╝"
+            frame[y + h - 1, x + i] = "═"
+        frame[y + h - 1, x + w - 1] = "╝"
