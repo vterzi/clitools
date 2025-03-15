@@ -1,11 +1,12 @@
 """Classes for drawing."""
 
-__all__ = ["ScreenBuffer", "KeyHandler", "Anchor", "Drawable", "Rectangle"]
+__all__ = ["Screen", "Point", "Displayable", "Text", "Button", "Rectangle"]
 
 from abc import ABC, abstractmethod
 from sys import platform, stdin
 from shutil import get_terminal_size
 from signal import signal, SIGWINCH
+from math import sqrt, exp
 from types import FrameType
 
 if platform == "win32":
@@ -48,25 +49,16 @@ else:
         return stdin.read(1)
 
 
-class KeyHandler(ABC):
-    """Handler for keypresses."""
-
-    @abstractmethod
-    def handle(self, key: str) -> None:
-        """Handle a keypress."""
-
-
-class ScreenBuffer:
+class Screen:
     """Alternative screen buffer."""
 
     def __init__(self) -> None:
         self._cols = 0
         self._rows = 0
         self._buffer: "list[str]" = []
-        self.cursor_col = 1
-        self.cursor_row = 1
-        self._objects: "list[Drawable]" = []
-        self._handlers: "set[KeyHandler]" = set()
+        self._objects: "list[Displayable]" = []
+        self._buttons: "list[Button]" = []
+        self._focus: "Button|None" = None
 
         def resize_handler(signum: int, frame: "FrameType|None") -> None:
             size = get_terminal_size()
@@ -75,13 +67,11 @@ class ScreenBuffer:
             self._cols = cols
             self._rows = rows
             self._buffer = [" "] * (cols * rows)
-            self.cursor_col = min(self.cursor_col, cols)
-            self.cursor_row = min(self.cursor_row, rows)
-            self.draw()
+            self.display()
 
         self._stdin_attrs = get_stdin_attrs()
         set_stdin_raw()
-        print("\033[?1049h")
+        print("\033[?1049h\033[?25l", end="", flush=True)
         resize_handler(int(SIGWINCH), None)
         signal(SIGWINCH, resize_handler)
 
@@ -114,19 +104,19 @@ class ScreenBuffer:
         if idx >= 0:
             self._buffer[idx] = value[0]
 
-    def show_cursor(self) -> None:
-        """Show the cursor's current position."""
-        print(f"\033[{self.cursor_row};{self.cursor_col}H", end="", flush=True)
-
-    def add(self, obj: "Drawable") -> None:
-        """Add a drawable object."""
+    def add(self, obj: "Displayable") -> None:
+        """Add a displayable object."""
         self._objects.append(obj)
-        self.draw()
+        if isinstance(obj, Button):
+            self._buttons.append(obj)
+        self.display()
 
-    def remove(self, obj: "Drawable") -> None:
-        """Remove a drawable object."""
+    def remove(self, obj: "Displayable") -> None:
+        """Remove a displayable object."""
         self._objects.remove(obj)
-        self.draw()
+        if isinstance(obj, Button):
+            self._buttons.remove(obj)
+        self.display()
 
     def fmt(self, fmt: str, row: int, col: int, width: int) -> None:
         """Select graphic rendition for a part of the buffer."""
@@ -145,45 +135,75 @@ class ScreenBuffer:
         for i in range(len(buffer)):
             buffer[i] = " "
 
-    def draw(self) -> None:
-        """Draw the buffer."""
+    def display(self) -> None:
+        """Display the buffer."""
         self.clear()
         for obj in self._objects:
-            obj.draw(self)
+            obj.display()
+        if self._focus is not None:
+            self._focus.focus()
         print("\033[H" + "".join(self._buffer), end="", flush=True)
-        self.show_cursor()
 
     def listen_keys(self) -> None:
         """Listen for input."""
-        handlers = self._handlers
+        buttons = self._buttons
         while True:
             key = get_key()
             if key == "q":
                 break
-            if key == "\033":
-                if get_key() == "[":
-                    key = get_key()
-                    if key == "A" and self.cursor_row > 1:
-                        self.cursor_row -= 1
-                    elif key == "B" and self.cursor_row < self._rows:
-                        self.cursor_row += 1
-                    elif key == "C" and self.cursor_col < self._cols:
-                        self.cursor_col += 1
-                    elif key == "D" and self.cursor_col > 1:
-                        self.cursor_col -= 1
-                self.show_cursor()
-            else:
-                for handler in handlers:
-                    handler.handle(key)
+            if key == "\033" and get_key() == "[":
+                key = get_key()
+                if key in "ABCD":
+                    if self._focus is not None:
+                        focus = self._focus
+                        center = focus.center
+                        col = center[1]
+                        row = center[0]
+                        if key == "A":
+                            col_factor = 0
+                            row_factor = -1
+                        elif key == "B":
+                            col_factor = 0
+                            row_factor = 1
+                        elif key == "C":
+                            col_factor = 1
+                            row_factor = 0
+                        elif key == "D":
+                            col_factor = -1
+                            row_factor = 0
+                        best_weight = 0.0
+                        choice = -1
+                        for i, button in enumerate(buttons):
+                            if button != focus:
+                                center = button.center
+                                col_diff = center[1] - col
+                                row_diff = 2 * (center[0] - row)
+                                dist = sqrt(
+                                    col_diff * col_diff + row_diff * row_diff
+                                )
+                                weight = (
+                                    col_factor * col_diff
+                                    + row_factor * row_diff
+                                ) * exp(-dist)
+                                if weight > best_weight:
+                                    best_weight = weight
+                                    choice = i
+                        if choice >= 0:
+                            self._focus = buttons[choice]
+                    elif len(buttons) > 0:
+                        self._focus = buttons[0]
+                    self.display()
+            elif key == "\r" and self._focus is not None:
+                self._focus.press()
 
     def close(self) -> None:
-        """Close frame."""
-        print("\033[?1049l")
+        """Close the buffer."""
+        print("\033[?1049l\033[?25h", end="", flush=True)
         set_stdin_attrs(self._stdin_attrs)
 
 
-class Anchor:
-    """Anchor."""
+class Point:
+    """Point in normalized coordinates."""
 
     def __init__(self, y: float, x: float) -> None:
         self.x = x
@@ -198,54 +218,91 @@ class Anchor:
         return self.y * (rows - 1) + 1
 
 
-class Drawable(ABC):
-    """Drawable object."""
+class Displayable(ABC):
+    """Displayable object."""
+
+    def __init__(self, screen: Screen) -> None:
+        self._screen = screen
+        screen.add(self)
 
     @abstractmethod
-    def draw(self, frame: ScreenBuffer) -> None:
-        """Draw object."""
+    def display(self) -> None:
+        """Display the object."""
 
 
-class Text(Drawable):
+class Text(Displayable):
     """Text."""
 
-    def __init__(self, text: str, row: int, col: int, fmt: str = "") -> None:
-        self.text = text
+    def __init__(
+        self,
+        screen: Screen,
+        text: str,
+        row: int,
+        col: int,
+        fmt: str = "",
+    ) -> None:
+        self._text = text
         self.col = col
         self.row = row
-        self.fmt = fmt
+        self._fmt = fmt
+        super().__init__(screen)
 
-    def draw(self, frame: ScreenBuffer) -> None:
+    def display(self) -> None:
+        screen = self._screen
         col = self.col
         row = self.row
-        for i, char in enumerate(self.text):
-            frame[row, col + i] = char
-        if self.fmt:
-            frame.fmt(self.fmt, row, col, len(self.text))
+        text = self._text
+        for i, char in enumerate(text):
+            screen[row, col + i] = char
+        fmt = self._fmt
+        if fmt:
+            screen.fmt(fmt, row, col, len(text))
 
 
-class Rectangle(Drawable):
+class Button(Text):
+    """Button."""
+
+    @property
+    def center(self) -> "tuple[int, int]":
+        """Get the position of the center."""
+        return self.row, self.col + (len(self._text) - 1) // 2
+
+    def focus(self) -> None:
+        """Focus on the button."""
+        self._screen.fmt("7", self.row, self.col, len(self._text))
+
+    def press(self) -> None:
+        """Press the button."""
+
+
+class Rectangle(Displayable):
     """Rectangle."""
 
-    def __init__(self, top_left: Anchor, bottom_right: Anchor) -> None:
+    def __init__(
+        self, screen: Screen, top_left: Point, bottom_right: Point
+    ) -> None:
         self.top_left = top_left
         self.bottom_right = bottom_right
+        super().__init__(screen)
 
-    def draw(self, frame: ScreenBuffer) -> None:
-        cols = frame.cols
-        rows = frame.rows
-        x = self.top_left.col(cols)
-        y = self.top_left.row(rows)
-        w = self.bottom_right.col(cols) - x + 1
-        h = self.bottom_right.row(rows) - y + 1
-        frame[y, x] = "╔"
+    def display(self) -> None:
+        screen = self._screen
+        cols = screen.cols
+        rows = screen.rows
+        top_left = self.top_left
+        x = top_left.col(cols)
+        y = top_left.row(rows)
+        bottom_right = self.bottom_right
+        w = bottom_right.col(cols) - x + 1
+        h = bottom_right.row(rows) - y + 1
+        screen[y, x] = "╔"
         for i in range(1, w - 1):
-            frame[y, x + i] = "═"
-        frame[y, x + w - 1] = "╗"
+            screen[y, x + i] = "═"
+        screen[y, x + w - 1] = "╗"
         for j in range(1, h - 1):
-            frame[y + j, x] = "║"
-            frame[y + j, x + w - 1] = "║"
-        frame[y + h - 1, x] = "╚"
+            screen[y + j, x] = "║"
+            screen[y + j, x + w - 1] = "║"
+        screen[y + h - 1, x] = "╚"
         for i in range(1, w - 1):
-            frame[y + h - 1, x + i] = "═"
-        frame[y + h - 1, x + w - 1] = "╝"
+            screen[y + h - 1, x + i] = "═"
+        screen[y + h - 1, x + w - 1] = "╝"
