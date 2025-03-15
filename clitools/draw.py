@@ -128,6 +128,17 @@ class ScreenBuffer:
         self._objects.remove(obj)
         self.draw()
 
+    def fmt(self, fmt: str, row: int, col: int, width: int) -> None:
+        """Select graphic rendition for a part of the buffer."""
+        if 1 <= row <= self._rows:
+            cols = self._cols
+            col = min(max(1, col), cols)
+            width = min(max(1, width), cols - col + 1)
+            idx = self.idx(row, col)
+            self._buffer[idx] = f"\033[{fmt}m" + self._buffer[idx]
+            idx += width - 1
+            self._buffer[idx] = self._buffer[idx] + "\033[m"
+
     def clear(self) -> None:
         """Clear the buffer."""
         buffer = self._buffer
@@ -193,6 +204,24 @@ class Drawable(ABC):
     @abstractmethod
     def draw(self, frame: ScreenBuffer) -> None:
         """Draw object."""
+
+
+class Text(Drawable):
+    """Text."""
+
+    def __init__(self, text: str, row: int, col: int, fmt: str = "") -> None:
+        self.text = text
+        self.col = col
+        self.row = row
+        self.fmt = fmt
+
+    def draw(self, frame: ScreenBuffer) -> None:
+        col = self.col
+        row = self.row
+        for i, char in enumerate(self.text):
+            frame[row, col + i] = char
+        if self.fmt:
+            frame.fmt(self.fmt, row, col, len(self.text))
 
 
 class Rectangle(Drawable):
