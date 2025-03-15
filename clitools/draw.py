@@ -9,7 +9,7 @@ from signal import signal, SIGWINCH
 from types import FrameType
 
 if platform == "win32":
-    from msvcrt import getch
+    from msvcrt import getch  # type: ignore
 
     def get_stdin_attrs() -> list:
         """Get the TTY attributes of the stdandard input."""
