@@ -26,7 +26,6 @@ def main() -> None:
 
     frame = ScreenBuffer()
     frame.add(Rectangle(Anchor(0, 0), Anchor(1, 1)))
-    frame._buffer[0] = "\033[3mA\033[0m"
 
     try:
         frame.listen_keys()
