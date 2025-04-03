@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from sys import platform, stdin
 from shutil import get_terminal_size
 from signal import signal, SIGWINCH
-from math import sqrt, exp
 from types import FrameType
 
 if platform == "win32":
@@ -26,7 +25,10 @@ if platform == "win32":
 
     def get_key() -> str:
         """Read a keypress."""
-        return getch().decode()
+        key = getch()
+        if key in {b"\x00", b"\xe0"}:
+            key += getch()
+        return key.decode(errors="ignore")
 
 else:
     from tty import setraw
@@ -46,7 +48,17 @@ else:
 
     def get_key() -> str:
         """Read a keypress."""
-        return stdin.read(1)
+        key = stdin.read(1)
+        if key == "\x1b":
+            char = stdin.read(1)
+            key += char
+            if char in {"[", "O"}:
+                while True:
+                    char = stdin.read(1)
+                    key += char
+                    if char.isalpha() or char == "~":
+                        break
+        return key
 
 
 class Screen:
@@ -71,7 +83,7 @@ class Screen:
 
         self._stdin_attrs = get_stdin_attrs()
         set_stdin_raw()
-        print("\033[?1049h\033[?25l", end="", flush=True)
+        self.print("\x1b[?1049h\x1b[?25l")
         resize_handler(int(SIGWINCH), None)
         signal(SIGWINCH, resize_handler)
 
@@ -84,6 +96,10 @@ class Screen:
     def rows(self) -> int:
         """Number of rows."""
         return self._rows
+
+    def print(self, text: str) -> None:
+        """Print text."""
+        print(text, end="", flush=True)
 
     def idx(self, row: int, col: int) -> int:
         """Get the buffer index for a one-based position (row, column)."""
@@ -125,9 +141,9 @@ class Screen:
             col = min(max(1, col), cols)
             width = min(max(1, width), cols - col + 1)
             idx = self.idx(row, col)
-            self._buffer[idx] = f"\033[{fmt}m" + self._buffer[idx]
+            self._buffer[idx] = f"\x1b[{fmt}m" + self._buffer[idx]
             idx += width - 1
-            self._buffer[idx] = self._buffer[idx] + "\033[m"
+            self._buffer[idx] = self._buffer[idx] + "\x1b[m"
 
     def clear(self) -> None:
         """Clear the buffer."""
@@ -142,63 +158,57 @@ class Screen:
             obj.display()
         if self._focus is not None:
             self._focus.focus()
-        print("\033[H" + "".join(self._buffer), end="", flush=True)
+        self.print("\x1b[H" + "".join(self._buffer))
 
     def listen_keys(self) -> None:
         """Listen for input."""
         buttons = self._buttons
         while True:
             key = get_key()
-            if key == "q":
+            if key == "\x1b\x1b":
                 break
-            if key == "\033" and get_key() == "[":
-                key = get_key()
-                if key in "ABCD":
-                    if self._focus is not None:
-                        focus = self._focus
-                        center = focus.center
-                        col = center[1]
-                        row = center[0]
-                        if key == "A":
-                            col_factor = 0
-                            row_factor = -1
-                        elif key == "B":
-                            col_factor = 0
-                            row_factor = 1
-                        elif key == "C":
-                            col_factor = 1
-                            row_factor = 0
-                        elif key == "D":
-                            col_factor = -1
-                            row_factor = 0
-                        best_weight = 0.0
-                        choice = -1
-                        for i, button in enumerate(buttons):
-                            if button != focus:
-                                center = button.center
-                                col_diff = center[1] - col
-                                row_diff = 2 * (center[0] - row)
-                                dist = sqrt(
-                                    col_diff * col_diff + row_diff * row_diff
-                                )
-                                weight = (
-                                    col_factor * col_diff
-                                    + row_factor * row_diff
-                                ) * exp(-dist)
-                                if weight > best_weight:
-                                    best_weight = weight
-                                    choice = i
-                        if choice >= 0:
-                            self._focus = buttons[choice]
-                    elif len(buttons) > 0:
-                        self._focus = buttons[0]
-                    self.display()
+            if key in {"\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"}:
+                if self._focus is not None:
+                    focus = self._focus
+                    center = focus.center
+                    col = center[1]
+                    row = center[0]
+                    if key == "\x1b[A":
+                        col_factor = 0
+                        row_factor = -1
+                    elif key == "\x1b[B":
+                        col_factor = 0
+                        row_factor = 1
+                    elif key == "\x1b[C":
+                        col_factor = 1
+                        row_factor = 0
+                    elif key == "\x1b[D":
+                        col_factor = -1
+                        row_factor = 0
+                    best_weight = 0.0
+                    choice = -1
+                    for i, button in enumerate(buttons):
+                        if button != focus:
+                            center = button.center
+                            col_diff = center[1] - col
+                            row_diff = 2 * (center[0] - row)
+                            weight = (
+                                col_factor * col_diff + row_factor * row_diff
+                            ) / (col_diff * col_diff + row_diff * row_diff + 1)
+                            if weight > best_weight:
+                                best_weight = weight
+                                choice = i
+                    if choice >= 0:
+                        self._focus = buttons[choice]
+                elif len(buttons) > 0:
+                    self._focus = buttons[0]
+                self.display()
             elif key == "\r" and self._focus is not None:
                 self._focus.press()
 
     def close(self) -> None:
         """Close the buffer."""
-        print("\033[?1049l\033[?25h", end="", flush=True)
+        self.print("\x1b[?1049l\x1b[?25h")
         set_stdin_attrs(self._stdin_attrs)
 
 
