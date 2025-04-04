@@ -2,7 +2,8 @@
 
 from sys import argv
 
-from clitools.draw import ScreenBuffer, Anchor, Rectangle
+from clitools.screen import Screen, Point, Rectangle
+
 from clitools.connect import read_port, ServerConnection
 
 
@@ -24,13 +25,12 @@ def main() -> None:
         print(err)
         return
 
-    frame = ScreenBuffer()
-    frame.add(Rectangle(Anchor(0, 0), Anchor(1, 1)))
-
     try:
-        frame.listen_keys()
+        screen = Screen()
+        Rectangle(screen, Point(0, 0), Point(1, 1))
+        screen.listen_keys()
     finally:
-        frame.close()
+        screen.close()
         server.close()
 
 
