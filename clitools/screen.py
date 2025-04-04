@@ -57,12 +57,21 @@ else:
                     char = stdin.read(1)
                     key += char
                     if char.isalpha() or char == "~":
+                        # if char == "M":
+                        #     key += stdin.buffer.read(3).decode(
+                        #         errors="ignore",
+                        #     )
                         break
         return key
 
 
 class Screen:
     """Alternative screen buffer."""
+
+    @classmethod
+    def _print(cls, text: str) -> None:
+        """Print text."""
+        print(text, end="", flush=True)
 
     def __init__(self) -> None:
         self._cols = 0
@@ -83,7 +92,7 @@ class Screen:
 
         self._stdin_attrs = get_stdin_attrs()
         set_stdin_raw()
-        self.print("\x1b[?1049h\x1b[?25l")
+        self._print("\x1b[?1049h\x1b[?25l\x1b[?1003h\x1b[?1006h")
         resize_handler(int(SIGWINCH), None)
         signal(SIGWINCH, resize_handler)
 
@@ -97,11 +106,7 @@ class Screen:
         """Number of rows."""
         return self._rows
 
-    def print(self, text: str) -> None:
-        """Print text."""
-        print(text, end="", flush=True)
-
-    def idx(self, row: int, col: int) -> int:
+    def _idx(self, row: int, col: int) -> int:
         """Get the buffer index for a one-based position (row, column)."""
         cols = self._cols
         rows = self._rows
@@ -112,11 +117,11 @@ class Screen:
         )
 
     def __getitem__(self, key: "tuple[int, int]") -> str:
-        idx = self.idx(key[0], key[1])
+        idx = self._idx(key[0], key[1])
         return self._buffer[idx] if idx >= 0 else ""
 
     def __setitem__(self, key: "tuple[int, int]", value: str) -> None:
-        idx = self.idx(key[0], key[1])
+        idx = self._idx(key[0], key[1])
         if idx >= 0:
             self._buffer[idx] = value[0]
 
@@ -140,7 +145,7 @@ class Screen:
             cols = self._cols
             col = min(max(1, col), cols)
             width = min(max(1, width), cols - col + 1)
-            idx = self.idx(row, col)
+            idx = self._idx(row, col)
             self._buffer[idx] = f"\x1b[{fmt}m" + self._buffer[idx]
             idx += width - 1
             self._buffer[idx] = self._buffer[idx] + "\x1b[m"
@@ -158,7 +163,7 @@ class Screen:
             obj.display()
         if self._focus is not None:
             self._focus.focus()
-        self.print("\x1b[H" + "".join(self._buffer))
+        self._print("\x1b[H" + "".join(self._buffer))
 
     def listen_keys(self) -> None:
         """Listen for input."""
@@ -208,7 +213,7 @@ class Screen:
 
     def close(self) -> None:
         """Close the buffer."""
-        self.print("\x1b[?1049l\x1b[?25h")
+        self._print("\x1b[?1049l\x1b[?25h\x1b[?1003l\x1b[?1006l")
         set_stdin_attrs(self._stdin_attrs)
 
 
